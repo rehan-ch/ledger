@@ -51,7 +51,7 @@ export class Database {
       CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         voucher_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL REFERENCES users(id),
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         reference TEXT NOT NULL DEFAULT '',
@@ -213,10 +213,12 @@ export class Database {
     return transactions;
   }
 
-  createTransaction(txn: { user_id: number; date: string; description: string; reference: string; entries: TransactionEntry[] }): Transaction {
-    // Validate user exists
-    const user = this.getUser(txn.user_id);
-    if (!user) throw new Error(`User with ID ${txn.user_id} not found`);
+  createTransaction(txn: { user_id: number | null; date: string; description: string; reference: string; entries: TransactionEntry[] }): Transaction {
+    // Validate user exists if provided
+    if (txn.user_id) {
+      const user = this.getUser(txn.user_id);
+      if (!user) throw new Error(`User with ID ${txn.user_id} not found`);
+    }
 
     // Validate: debits must equal credits (in base currency)
     let totalDebit = 0;
@@ -319,6 +321,108 @@ export class Database {
       result[account.id] = { account, entries };
     }
     return result;
+  }
+
+  // --- Dashboard ---
+  getDashboardStats() {
+    const totalAccounts = (this.db.prepare('SELECT COUNT(*) as count FROM accounts WHERE is_active = 1').get() as any).count;
+    const totalTransactions = (this.db.prepare('SELECT COUNT(*) as count FROM transactions').get() as any).count;
+    const totalUsers = (this.db.prepare('SELECT COUNT(*) as count FROM users').get() as any).count;
+
+    // Total assets, liabilities, equity, revenue, expense
+    const balancesByType = this.db.prepare(`
+      SELECT a.type,
+        COALESCE(SUM(te.debit * te.exchange_rate), 0) as total_debit,
+        COALESCE(SUM(te.credit * te.exchange_rate), 0) as total_credit
+      FROM accounts a
+      LEFT JOIN transaction_entries te ON te.account_id = a.id
+      WHERE a.is_active = 1
+      GROUP BY a.type
+    `).all() as any[];
+
+    const summary: Record<string, number> = { asset: 0, liability: 0, equity: 0, revenue: 0, expense: 0 };
+    for (const row of balancesByType) {
+      if (row.type === 'asset' || row.type === 'expense') {
+        summary[row.type] = row.total_debit - row.total_credit;
+      } else {
+        summary[row.type] = row.total_credit - row.total_debit;
+      }
+    }
+
+    // Monthly revenue & expense
+    const monthlyData = this.db.prepare(`
+      SELECT
+        strftime('%Y-%m', t.date) as month,
+        a.type,
+        CASE
+          WHEN a.type = 'revenue' THEN COALESCE(SUM(te.credit * te.exchange_rate), 0) - COALESCE(SUM(te.debit * te.exchange_rate), 0)
+          WHEN a.type = 'expense' THEN COALESCE(SUM(te.debit * te.exchange_rate), 0) - COALESCE(SUM(te.credit * te.exchange_rate), 0)
+        END as amount
+      FROM transactions t
+      JOIN transaction_entries te ON te.transaction_id = t.id
+      JOIN accounts a ON a.id = te.account_id
+      WHERE a.type IN ('revenue', 'expense')
+      GROUP BY month, a.type
+      ORDER BY month
+    `).all() as any[];
+
+    // Pivot into { month, revenue, expense } — fill all 12 months of the year
+    const monthMap: Record<string, { month: string; revenue: number; expense: number }> = {};
+
+    // Find the year from data, or use current year
+    const dataYears = monthlyData.map((r: any) => r.month.substring(0, 4));
+    const year = dataYears.length > 0 ? dataYears[0] : new Date().getFullYear().toString();
+
+    // Pre-fill all 12 months
+    for (let m = 1; m <= 12; m++) {
+      const key = `${year}-${m.toString().padStart(2, '0')}`;
+      monthMap[key] = { month: key, revenue: 0, expense: 0 };
+    }
+
+    for (const row of monthlyData) {
+      if (!monthMap[row.month]) monthMap[row.month] = { month: row.month, revenue: 0, expense: 0 };
+      monthMap[row.month][row.type as 'revenue' | 'expense'] = Math.abs(row.amount);
+    }
+    const monthlyChart = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month));
+
+    // Top 5 accounts by transaction volume
+    const topAccounts = this.db.prepare(`
+      SELECT a.code, a.name, a.type, COUNT(te.id) as txn_count,
+        COALESCE(SUM(te.debit * te.exchange_rate), 0) + COALESCE(SUM(te.credit * te.exchange_rate), 0) as volume
+      FROM accounts a
+      JOIN transaction_entries te ON te.account_id = a.id
+      GROUP BY a.id
+      ORDER BY txn_count DESC
+      LIMIT 5
+    `).all() as any[];
+
+    // Recent 5 transactions
+    const recentTransactions = this.db.prepare(`
+      SELECT t.voucher_id, t.date, t.description, u.name as user_name,
+        COALESCE(SUM(te.debit), 0) as total_debit
+      FROM transactions t
+      LEFT JOIN users u ON u.id = t.user_id
+      JOIN transaction_entries te ON te.transaction_id = t.id
+      GROUP BY t.id
+      ORDER BY t.date DESC, t.voucher_id DESC
+      LIMIT 5
+    `).all() as any[];
+
+    // Account type distribution (count per type)
+    const accountsByType = this.db.prepare(`
+      SELECT type, COUNT(*) as count FROM accounts WHERE is_active = 1 GROUP BY type
+    `).all() as any[];
+
+    return {
+      totalAccounts,
+      totalTransactions,
+      totalUsers,
+      summary,
+      monthlyChart,
+      topAccounts,
+      recentTransactions,
+      accountsByType,
+    };
   }
 
   // --- App Settings ---

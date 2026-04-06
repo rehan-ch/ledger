@@ -4,6 +4,7 @@ import { StatusBar } from './components/StatusBar';
 import { Toast, ToastMessage } from './components/Toast';
 import { SetupWizard } from './views/SetupWizard';
 import { ActivationScreen } from './views/ActivationScreen';
+import { Dashboard } from './views/Dashboard';
 import { ChartOfAccounts } from './views/ChartOfAccounts';
 import { JournalEntry } from './views/JournalEntry';
 import { GeneralLedger } from './views/GeneralLedger';
@@ -40,24 +41,27 @@ declare global {
       updateExchangeRate: (code: string, rate: number) => Promise<void>;
       getTrialBalance: (filters?: any) => Promise<any[]>;
       getGeneralLedger: (filters?: any) => Promise<any>;
+      getDashboardStats: () => Promise<any>;
+      seedDemoData: () => Promise<any>;
     };
   }
 }
 
 type AppState = 'loading' | 'setup' | 'activation' | 'app';
-type View = 'accounts' | 'journal' | 'ledger' | 'trial-balance' | 'currencies';
+type View = 'dashboard' | 'accounts' | 'journal' | 'ledger' | 'trial-balance' | 'currencies';
 
 const VIEWS: { id: View; label: string; shortcut: string }[] = [
-  { id: 'accounts', label: 'Chart of Accounts', shortcut: '1' },
-  { id: 'journal', label: 'Journal Entry', shortcut: '2' },
-  { id: 'ledger', label: 'General Ledger', shortcut: '3' },
-  { id: 'trial-balance', label: 'Trial Balance', shortcut: '4' },
-  { id: 'currencies', label: 'Currencies', shortcut: '5' },
+  { id: 'dashboard', label: 'Dashboard', shortcut: '1' },
+  { id: 'accounts', label: 'Chart of Accounts', shortcut: '2' },
+  { id: 'journal', label: 'Journal Entry', shortcut: '3' },
+  { id: 'ledger', label: 'General Ledger', shortcut: '4' },
+  { id: 'trial-balance', label: 'Trial Balance', shortcut: '5' },
+  { id: 'currencies', label: 'Currencies', shortcut: '6' },
 ];
 
 export function App() {
   const [appState, setAppState] = useState<AppState>('loading');
-  const [activeView, setActiveView] = useState<View>('accounts');
+  const [activeView, setActiveView] = useState<View>('dashboard');
   const [showPalette, setShowPalette] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -111,7 +115,7 @@ export function App() {
         return;
       }
 
-      if (e.altKey && e.key >= '1' && e.key <= '5') {
+      if (e.altKey && e.key >= '1' && e.key <= '6') {
         e.preventDefault();
         const view = VIEWS[parseInt(e.key) - 1];
         if (view) setActiveView(view.id);
@@ -149,6 +153,7 @@ export function App() {
   const renderView = () => {
     const baseProps = { showToast, refresh, key: refreshKey };
     switch (activeView) {
+      case 'dashboard': return <Dashboard {...baseProps} />;
       case 'accounts': return <ChartOfAccounts {...baseProps} />;
       case 'journal': return <JournalEntry {...baseProps} />;
       case 'ledger': return <GeneralLedger {...baseProps} />;
@@ -173,7 +178,7 @@ export function App() {
       )}
       <header className="app-header">
         <h1>Ledger</h1>
-        <span className="shortcut-hint">Ctrl+P Command Palette | Alt+1-5 Navigate</span>
+        <span className="shortcut-hint">Ctrl+P Command Palette | Alt+1-6 Navigate</span>
       </header>
 
       <div className="app-body">

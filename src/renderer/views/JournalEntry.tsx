@@ -151,7 +151,6 @@ export function JournalEntry({ showToast, refresh }: Props) {
   const isBalanced = Math.abs(totalDebits - totalCredits) < 0.005;
 
   const handleSubmit = async () => {
-    if (!userId) { showToast('Please select a user', 'error'); return; }
     if (!date || !description.trim()) { showToast('Date and description are required', 'error'); return; }
 
     const txnEntries: TransactionEntry[] = entries
@@ -167,7 +166,7 @@ export function JournalEntry({ showToast, refresh }: Props) {
     if (txnEntries.length < 2) { showToast('At least 2 entries required', 'error'); return; }
 
     const result = await window.api.createTransaction({
-      user_id: parseInt(userId), date, description: description.trim(), reference: '', entries: txnEntries,
+      user_id: userId ? parseInt(userId) : null, date, description: description.trim(), reference: '', entries: txnEntries,
     });
 
     if (result.success) {
@@ -243,7 +242,7 @@ export function JournalEntry({ showToast, refresh }: Props) {
             <div className="form-group">
               <label>User (auto from account)</label>
               <div className="form-input" style={{ background: 'var(--bg-tertiary)', cursor: 'default', color: userId ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                {userId ? (users.find(u => u.id.toString() === userId)?.name || `ID ${userId}`) : 'Select an account below...'}
+                {userId ? (users.find(u => u.id.toString() === userId)?.name || `ID ${userId}`) : 'None (general entry)'}
               </div>
             </div>
             <div className="form-group">

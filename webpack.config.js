@@ -1,10 +1,13 @@
 const path = require('path');
+const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+
+const isDev = process.env.NODE_ENV !== 'production';
 
 module.exports = [
   // Main process
   {
-    mode: 'development',
+    mode: isDev ? 'development' : 'production',
     entry: './src/main/index.ts',
     target: 'electron-main',
     module: {
@@ -13,10 +16,13 @@ module.exports = [
     resolve: { extensions: ['.ts', '.js'] },
     output: { path: path.resolve(__dirname, 'dist'), filename: 'main.js' },
     externals: { 'better-sqlite3': 'commonjs better-sqlite3', 'crypto': 'commonjs crypto' },
+    plugins: [
+      new webpack.DefinePlugin({ 'process.env.IS_DEV': JSON.stringify(isDev) }),
+    ],
   },
   // Preload
   {
-    mode: 'development',
+    mode: isDev ? 'development' : 'production',
     entry: './src/main/preload.ts',
     target: 'electron-preload',
     module: {
@@ -27,7 +33,7 @@ module.exports = [
   },
   // Renderer process
   {
-    mode: 'development',
+    mode: isDev ? 'development' : 'production',
     entry: './src/renderer/index.tsx',
     target: 'electron-renderer',
     module: {
@@ -42,6 +48,7 @@ module.exports = [
       new HtmlWebpackPlugin({
         template: './src/renderer/index.html',
       }),
+      new webpack.DefinePlugin({ 'process.env.IS_DEV': JSON.stringify(isDev) }),
     ],
   },
 ];
