@@ -72,6 +72,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, db: Database) {
   ipcMain.handle('reports:trialBalance', (_, filters) => db.getTrialBalance(filters));
   ipcMain.handle('reports:generalLedger', (_, filters) => db.getGeneralLedger(filters));
   ipcMain.handle('reports:dashboard', () => db.getDashboardStats());
+  ipcMain.handle('reports:incomeStatement', (_, filters) => db.getIncomeStatement(filters));
+  ipcMain.handle('reports:balanceSheet', (_, date) => db.getBalanceSheet(date));
 
   // Seed demo data (dev only)
   ipcMain.handle('dev:seed', () => {

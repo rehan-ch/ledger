@@ -37,6 +37,10 @@ export function JournalEntry({ showToast, refresh }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Transaction | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
     const [accts, currs, usrs, txns, nextVid] = await Promise.all([
@@ -57,6 +61,19 @@ export function JournalEntry({ showToast, refresh }: Props) {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const filteredTransactions = transactions.filter(txn => {
+    if (filterFrom && txn.date < filterFrom) return false;
+    if (filterTo && txn.date > filterTo) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matches = txn.description.toLowerCase().includes(q)
+        || (txn.user_name || '').toLowerCase().includes(q)
+        || txn.voucher_id.toString().includes(q);
+      if (!matches) return false;
+    }
+    return true;
+  });
 
   // Keyboard handler
   useEffect(() => {
@@ -82,6 +99,14 @@ export function JournalEntry({ showToast, refresh }: Props) {
       }
 
       if (showForm || confirmDelete) return;
+
+      // / to focus search
+      if (e.key === '/' && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
 
       switch (e.key) {
@@ -92,7 +117,7 @@ export function JournalEntry({ showToast, refresh }: Props) {
         case 'j':
         case 'ArrowDown':
           e.preventDefault();
-          setSelectedIndex(i => Math.min(i + 1, transactions.length - 1));
+          setSelectedIndex(i => Math.min(i + 1, filteredTransactions.length - 1));
           break;
         case 'k':
         case 'ArrowUp':
@@ -101,14 +126,14 @@ export function JournalEntry({ showToast, refresh }: Props) {
           break;
         case 'Enter':
           e.preventDefault();
-          if (transactions[selectedIndex]) {
-            setExpandedId(prev => prev === transactions[selectedIndex].id ? null : transactions[selectedIndex].id);
+          if (filteredTransactions[selectedIndex]) {
+            setExpandedId(prev => prev === filteredTransactions[selectedIndex].id ? null : filteredTransactions[selectedIndex].id);
           }
           break;
         case 'd':
           e.preventDefault();
-          if (transactions[selectedIndex]) {
-            setConfirmDelete(transactions[selectedIndex]);
+          if (filteredTransactions[selectedIndex]) {
+            setConfirmDelete(filteredTransactions[selectedIndex]);
           }
           break;
       }
@@ -303,6 +328,26 @@ export function JournalEntry({ showToast, refresh }: Props) {
         </div>
       )}
 
+      {/* Search & Date Filter */}
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
+        <input
+          ref={searchRef}
+          className="form-input"
+          style={{ width: '250px' }}
+          placeholder="/ Search voucher, description, user..."
+          value={searchQuery}
+          onChange={e => { setSearchQuery(e.target.value); setSelectedIndex(0); }}
+          onKeyDown={e => { if (e.key === 'Escape') { setSearchQuery(''); searchRef.current?.blur(); }}}
+        />
+        <label style={{ fontSize: '12px', color: 'var(--text-muted)' }}>From:</label>
+        <input className="form-input" type="date" style={{ width: '145px' }} value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+        <label style={{ fontSize: '12px', color: 'var(--text-muted)' }}>To:</label>
+        <input className="form-input" type="date" style={{ width: '145px' }} value={filterTo} onChange={e => setFilterTo(e.target.value)} />
+        {(searchQuery || filterFrom || filterTo) && (
+          <button className="btn" onClick={() => { setSearchQuery(''); setFilterFrom(''); setFilterTo(''); }} style={{ fontSize: '12px' }}>Clear</button>
+        )}
+      </div>
+
       <table className="data-table">
         <thead>
           <tr>
@@ -316,7 +361,7 @@ export function JournalEntry({ showToast, refresh }: Props) {
           </tr>
         </thead>
         <tbody>
-          {transactions.map((txn, i) => (
+          {filteredTransactions.map((txn, i) => (
             <React.Fragment key={txn.id}>
               <tr
                 className={i === selectedIndex ? 'selected' : ''}
@@ -348,9 +393,9 @@ export function JournalEntry({ showToast, refresh }: Props) {
               ))}
             </React.Fragment>
           ))}
-          {transactions.length === 0 && (
+          {filteredTransactions.length === 0 && (
             <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
-              No transactions yet. Press <strong>n</strong> to create one.
+              {transactions.length === 0 ? <>No transactions yet. Press <strong>n</strong> to create one.</> : 'No transactions match the filter.'}
             </td></tr>
           )}
         </tbody>

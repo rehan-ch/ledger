@@ -12,6 +12,30 @@ interface Props {
 
 const ACCOUNT_TYPES: AccountType[] = ['asset', 'liability', 'equity', 'revenue', 'expense'];
 
+function buildAccountTree(accounts: Account[]): { account: Account; depth: number }[] {
+  const result: { account: Account; depth: number }[] = [];
+  const childrenMap = new Map<number | null, Account[]>();
+
+  // Group accounts by parent_id
+  for (const account of accounts) {
+    const parentId = account.parent_id;
+    if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
+    childrenMap.get(parentId)!.push(account);
+  }
+
+  // Recursively flatten with depth
+  function addChildren(parentId: number | null, depth: number) {
+    const children = childrenMap.get(parentId) || [];
+    for (const child of children) {
+      result.push({ account: child, depth });
+      addChildren(child.id, depth + 1);
+    }
+  }
+
+  addChildren(null, 0);
+  return result;
+}
+
 export function ChartOfAccounts({ showToast, refresh }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
@@ -34,11 +58,13 @@ export function ChartOfAccounts({ showToast, refresh }: Props) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  const tree = buildAccountTree(accounts);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'e' && e.ctrlKey) {
         e.preventDefault();
-        exportToExcel(accounts.map(a => ({ Code: a.code, Name: a.name, Type: a.type, User: a.user_name || '', Currency: a.currency_code, Status: a.is_active ? 'Active' : 'Inactive' })), 'chart-of-accounts.xlsx', 'Accounts');
+        exportToExcel(tree.map(({ account: a, depth }) => ({ Code: a.code, Name: '  '.repeat(depth) + a.name, Type: a.type, User: a.user_name || '', Currency: a.currency_code, Status: a.is_active ? 'Active' : 'Inactive' })), 'chart-of-accounts.xlsx', 'Accounts');
         return;
       }
 
@@ -54,21 +80,21 @@ export function ChartOfAccounts({ showToast, refresh }: Props) {
         case 'Enter':
         case 'e':
           e.preventDefault();
-          if (accounts[selectedIndex]) {
-            setEditAccount(accounts[selectedIndex]);
+          if (tree[selectedIndex]) {
+            setEditAccount(tree[selectedIndex].account);
             setShowForm(true);
           }
           break;
         case 'd':
           e.preventDefault();
-          if (accounts[selectedIndex]) {
-            setConfirmDelete(accounts[selectedIndex]);
+          if (tree[selectedIndex]) {
+            setConfirmDelete(tree[selectedIndex].account);
           }
           break;
         case 'ArrowDown':
         case 'j':
           e.preventDefault();
-          setSelectedIndex(i => Math.min(i + 1, accounts.length - 1));
+          setSelectedIndex(i => Math.min(i + 1, tree.length - 1));
           break;
         case 'ArrowUp':
         case 'k':
@@ -144,7 +170,7 @@ export function ChartOfAccounts({ showToast, refresh }: Props) {
       <div className="view-header">
         <h2>Chart of Accounts</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn" onClick={() => exportToExcel(accounts.map(a => ({ Code: a.code, Name: a.name, Type: a.type, User: a.user_name || '', Currency: a.currency_code, Status: a.is_active ? 'Active' : 'Inactive' })), 'chart-of-accounts.xlsx', 'Accounts')}>
+          <button className="btn" onClick={() => exportToExcel(tree.map(({ account: a, depth }) => ({ Code: a.code, Name: '  '.repeat(depth) + a.name, Type: a.type, User: a.user_name || '', Currency: a.currency_code, Status: a.is_active ? 'Active' : 'Inactive' })), 'chart-of-accounts.xlsx', 'Accounts')}>
             Export (Ctrl+E)
           </button>
           <button className="btn btn-primary" onClick={() => { setEditAccount(null); setShowForm(true); }}>
@@ -160,12 +186,13 @@ export function ChartOfAccounts({ showToast, refresh }: Props) {
             <th>Name</th>
             <th>Type</th>
             <th>User</th>
+            <th className="amount">Balance</th>
             <th>Currency</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {accounts.map((account, i) => (
+          {buildAccountTree(accounts).map(({ account, depth }, i) => (
             <tr
               key={account.id}
               className={i === selectedIndex ? 'selected' : ''}
@@ -173,15 +200,21 @@ export function ChartOfAccounts({ showToast, refresh }: Props) {
               onDoubleClick={() => { setEditAccount(account); setShowForm(true); }}
             >
               <td>{account.code}</td>
-              <td>{account.name}</td>
+              <td style={{ paddingLeft: `${12 + depth * 20}px` }}>
+                {depth > 0 && <span style={{ color: 'var(--text-muted)', marginRight: '6px' }}>{'└'}</span>}
+                {account.name}
+              </td>
               <td><span className={`badge ${account.type}`}>{account.type}</span></td>
               <td>{account.user_name || '-'}</td>
+              <td className="amount" style={{ fontWeight: 600, color: (account.balance || 0) >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                {(account.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
               <td>{account.currency_code}</td>
               <td>{account.is_active ? 'Active' : 'Inactive'}</td>
             </tr>
           ))}
           {accounts.length === 0 && (
-            <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
+            <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px' }}>
               No accounts yet. Press <strong>n</strong> to create one.
             </td></tr>
           )}
@@ -219,6 +252,7 @@ function AccountForm({ account, currencies, accounts, users, onSubmit, onClose }
   onSubmit: (data: any) => void;
   onClose: () => void;
 }) {
+  const [error, setError] = useState('');
   const [code, setCode] = useState(account?.code || '');
   const [name, setName] = useState(account?.name || '');
   const [type, setType] = useState<AccountType>(account?.type || 'asset');
@@ -239,9 +273,13 @@ function AccountForm({ account, currencies, accounts, users, onSubmit, onClose }
   };
 
   const handleSubmit = () => {
-    if (!code.trim() || !name.trim()) return;
+    setError('');
+    if (!code.trim()) { setError('Account code is required'); return; }
+    if (!name.trim()) { setError('Account name is required'); return; }
+    if (userMode === 'existing' && !accountUserId) { setError('Please select a user or create a new one'); return; }
+    if (userMode === 'new' && !newUserName.trim()) { setError('Please enter a name for the new user'); return; }
 
-    if (userMode === 'new' && newUserName.trim()) {
+    if (userMode === 'new') {
       onSubmit({
         code: code.trim(),
         name: name.trim(),
@@ -270,6 +308,11 @@ function AccountForm({ account, currencies, accounts, users, onSubmit, onClose }
   return (
     <Modal title={account ? 'Edit Account' : 'New Account'} onClose={onClose}>
       <div onKeyDown={handleKeyDown}>
+        {error && (
+          <div style={{ background: '#3a1a1a', border: '1px solid var(--danger)', color: 'var(--danger)', padding: '8px 12px', borderRadius: '4px', marginBottom: '12px', fontSize: '13px' }}>
+            {error}
+          </div>
+        )}
         <div className="form-group">
           <label>Account Code</label>
           <input className="form-input" value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. 1000" autoFocus />
@@ -302,11 +345,8 @@ function AccountForm({ account, currencies, accounts, users, onSubmit, onClose }
             <SearchSelect
               value={accountUserId}
               onChange={setAccountUserId}
-              options={[
-                { value: '', label: 'None (no user)' },
-                ...users.map(u => ({ value: u.id.toString(), label: `${u.id} - ${u.name}` })),
-              ]}
-              placeholder="Type to search user..."
+              options={users.map(u => ({ value: u.id.toString(), label: `${u.id} - ${u.name}` }))}
+              placeholder="Type to search user (required)..."
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px', background: 'var(--bg-tertiary)', borderRadius: '4px' }}>
@@ -321,12 +361,18 @@ function AccountForm({ account, currencies, accounts, users, onSubmit, onClose }
 
         <div className="form-group">
           <label>Parent Account</label>
-          <select className="form-select" value={parentId} onChange={e => setParentId(e.target.value)}>
-            <option value="">None (Top Level)</option>
-            {accounts.filter(a => a.id !== account?.id).map(a => (
-              <option key={a.id} value={a.id}>{a.code} - {a.name}</option>
-            ))}
-          </select>
+          <SearchSelect
+            value={parentId}
+            onChange={setParentId}
+            options={[
+              { value: '', label: 'None (Top Level)' },
+              ...buildAccountTree(accounts.filter(a => a.id !== account?.id)).map(({ account: a, depth }) => ({
+                value: a.id.toString(),
+                label: `${'  '.repeat(depth)}${depth > 0 ? '└ ' : ''}${a.code} - ${a.name}`,
+              })),
+            ]}
+            placeholder="Type to search parent account..."
+          />
         </div>
         <div className="form-group">
           <label>Currency</label>

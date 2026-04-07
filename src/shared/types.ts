@@ -19,6 +19,7 @@ export interface Account {
   user_name?: string;
   parent_id: number | null;
   currency_code: string;
+  balance?: number;
   is_active: boolean;
   created_at: string;
 }
@@ -70,6 +71,7 @@ export interface LedgerEntry {
   date: string;
   description: string;
   reference: string;
+  user_name: string;
   debit: number;
   credit: number;
   running_balance: number;

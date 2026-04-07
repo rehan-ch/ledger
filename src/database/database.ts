@@ -126,9 +126,18 @@ export class Database {
 
   // --- Accounts ---
   getAccounts(): Account[] {
-    return this.db.prepare(
-      'SELECT a.*, u.name as user_name FROM accounts a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.code'
-    ).all() as Account[];
+    return this.db.prepare(`
+      SELECT a.*, u.name as user_name,
+        CASE
+          WHEN a.type IN ('asset','expense') THEN COALESCE(SUM(te.debit * te.exchange_rate), 0) - COALESCE(SUM(te.credit * te.exchange_rate), 0)
+          ELSE COALESCE(SUM(te.credit * te.exchange_rate), 0) - COALESCE(SUM(te.debit * te.exchange_rate), 0)
+        END as balance
+      FROM accounts a
+      LEFT JOIN users u ON u.id = a.user_id
+      LEFT JOIN transaction_entries te ON te.account_id = a.id
+      GROUP BY a.id
+      ORDER BY a.code
+    `).all() as Account[];
   }
 
   createAccount(account: Omit<Account, 'id' | 'created_at' | 'user_name'>): Account {
@@ -146,7 +155,7 @@ export class Database {
     for (const [key, value] of Object.entries(account)) {
       if (ALLOWED_FIELDS.has(key)) {
         fields.push(`${key} = ?`);
-        values.push(key === 'is_active' ? (value ? 1 : 0) : value);
+        values.push(key === 'is_active' ? (value ? 1 : 0) : value); 
       }
     }
     if (fields.length === 0) return this.db.prepare('SELECT a.*, u.name as user_name FROM accounts a LEFT JOIN users u ON u.id = a.user_id WHERE a.id = ?').get(id) as Account;
@@ -283,17 +292,38 @@ export class Database {
     `).all(...params) as TrialBalanceRow[];
   }
 
-  getGeneralLedger(filters?: { accountId?: number; userId?: number }): Record<number, { account: Account; entries: LedgerEntry[] }> {
+  getGeneralLedger(filters?: { accountId?: number; fromDate?: string; toDate?: string }): Record<number, { account: Account; entries: LedgerEntry[]; openingBalance: number; closingBalance: number }> {
     const accounts = filters?.accountId
-      ? [this.db.prepare('SELECT * FROM accounts WHERE id = ?').get(filters.accountId) as Account]
+      ? [this.db.prepare('SELECT a.*, u.name as user_name FROM accounts a LEFT JOIN users u ON u.id = a.user_id WHERE a.id = ?').get(filters.accountId) as Account]
       : this.getAccounts();
 
-    const result: Record<number, { account: Account; entries: LedgerEntry[] }> = {};
-
-    const userFilter = filters?.userId ? 'AND t.user_id = ?' : '';
-    const userParams = filters?.userId ? [filters.userId] : [];
+    const result: Record<number, { account: Account; entries: LedgerEntry[]; openingBalance: number; closingBalance: number }> = {};
 
     for (const account of accounts) {
+      // Calculate opening balance (all entries BEFORE fromDate)
+      let openingBalance = 0;
+      if (filters?.fromDate) {
+        const ob = this.db.prepare(`
+          SELECT
+            COALESCE(SUM(te.debit * te.exchange_rate), 0) as total_debit,
+            COALESCE(SUM(te.credit * te.exchange_rate), 0) as total_credit
+          FROM transaction_entries te
+          JOIN transactions t ON t.id = te.transaction_id
+          WHERE te.account_id = ? AND t.date < ?
+        `).get(account.id, filters.fromDate) as any;
+        if (account.type === 'asset' || account.type === 'expense') {
+          openingBalance = (ob?.total_debit || 0) - (ob?.total_credit || 0);
+        } else {
+          openingBalance = (ob?.total_credit || 0) - (ob?.total_debit || 0);
+        }
+      }
+
+      // Build date conditions
+      const conditions: string[] = ['te.account_id = ?'];
+      const params: any[] = [account.id];
+      if (filters?.fromDate) { conditions.push('t.date >= ?'); params.push(filters.fromDate); }
+      if (filters?.toDate) { conditions.push('t.date <= ?'); params.push(filters.toDate); }
+
       const entries = this.db.prepare(`
         SELECT
           t.id as transaction_id,
@@ -301,15 +331,17 @@ export class Database {
           t.date,
           t.description,
           t.reference,
+          COALESCE(u.name, '') as user_name,
           te.debit,
           te.credit
         FROM transaction_entries te
         JOIN transactions t ON t.id = te.transaction_id
-        WHERE te.account_id = ? ${userFilter}
+        LEFT JOIN users u ON u.id = t.user_id
+        WHERE ${conditions.join(' AND ')}
         ORDER BY t.date, t.voucher_id
-      `).all(account.id, ...userParams) as LedgerEntry[];
+      `).all(...params) as LedgerEntry[];
 
-      let running = 0;
+      let running = openingBalance;
       for (const entry of entries) {
         if (account.type === 'asset' || account.type === 'expense') {
           running += entry.debit - entry.credit;
@@ -318,9 +350,113 @@ export class Database {
         }
         entry.running_balance = running;
       }
-      result[account.id] = { account, entries };
+
+      const closingBalance = running;
+      result[account.id] = { account, entries, openingBalance, closingBalance };
     }
     return result;
+  }
+
+  // --- Balance Sheet ---
+  getBalanceSheet(asOfDate?: string) {
+    const dateFilter = asOfDate ? 'AND t.date <= ?' : '';
+    const params = asOfDate ? [asOfDate] : [];
+
+    const rows = this.db.prepare(`
+      SELECT
+        a.id, a.code as account_code, a.name as account_name, a.type as account_type, a.parent_id,
+        CASE
+          WHEN a.type IN ('asset','expense') THEN COALESCE(SUM(te.debit * te.exchange_rate), 0) - COALESCE(SUM(te.credit * te.exchange_rate), 0)
+          ELSE COALESCE(SUM(te.credit * te.exchange_rate), 0) - COALESCE(SUM(te.debit * te.exchange_rate), 0)
+        END as balance
+      FROM accounts a
+      LEFT JOIN transaction_entries te ON te.account_id = a.id
+      LEFT JOIN transactions t ON t.id = te.transaction_id ${dateFilter}
+      WHERE a.is_active = 1 AND a.type IN ('asset', 'liability', 'equity')
+      GROUP BY a.id
+      ORDER BY a.type, a.code
+    `).all(...params) as any[];
+
+    const assets = rows.filter(r => r.account_type === 'asset');
+    const liabilities = rows.filter(r => r.account_type === 'liability');
+    const equity = rows.filter(r => r.account_type === 'equity');
+
+    const totalAssets = assets.reduce((s: number, r: any) => s + r.balance, 0);
+    const totalLiabilities = liabilities.reduce((s: number, r: any) => s + r.balance, 0);
+    const totalEquity = equity.reduce((s: number, r: any) => s + r.balance, 0);
+
+    // Retained earnings = revenue - expenses (not in equity accounts)
+    const incomeRows = this.db.prepare(`
+      SELECT a.type,
+        CASE
+          WHEN a.type = 'revenue' THEN COALESCE(SUM(te.credit * te.exchange_rate), 0) - COALESCE(SUM(te.debit * te.exchange_rate), 0)
+          WHEN a.type = 'expense' THEN COALESCE(SUM(te.debit * te.exchange_rate), 0) - COALESCE(SUM(te.credit * te.exchange_rate), 0)
+        END as amount
+      FROM accounts a
+      LEFT JOIN transaction_entries te ON te.account_id = a.id
+      LEFT JOIN transactions t ON t.id = te.transaction_id ${dateFilter}
+      WHERE a.type IN ('revenue', 'expense') AND a.is_active = 1
+      GROUP BY a.type
+    `).all(...params) as any[];
+
+    const revenue = incomeRows.find((r: any) => r.type === 'revenue')?.amount || 0;
+    const expenses = incomeRows.find((r: any) => r.type === 'expense')?.amount || 0;
+    const retainedEarnings = revenue - expenses;
+
+    return {
+      assets, liabilities, equity,
+      totalAssets,
+      totalLiabilities,
+      totalEquity: totalEquity + retainedEarnings,
+      retainedEarnings,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + retainedEarnings)) < 0.01,
+    };
+  }
+
+  // --- Income Statement ---
+  getIncomeStatement(filters?: { fromDate?: string; toDate?: string }): {
+    revenue: { account_code: string; account_name: string; amount: number }[];
+    expenses: { account_code: string; account_name: string; amount: number }[];
+    totalRevenue: number;
+    totalExpenses: number;
+    netIncome: number;
+    grossProfit: number;
+  } {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (filters?.fromDate) { conditions.push('t.date >= ?'); params.push(filters.fromDate); }
+    if (filters?.toDate) { conditions.push('t.date <= ?'); params.push(filters.toDate); }
+    const whereClause = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+
+    const rows = this.db.prepare(`
+      SELECT
+        a.code as account_code,
+        a.name as account_name,
+        a.type as account_type,
+        CASE
+          WHEN a.type = 'revenue' THEN COALESCE(SUM(te.credit * te.exchange_rate), 0) - COALESCE(SUM(te.debit * te.exchange_rate), 0)
+          WHEN a.type = 'expense' THEN COALESCE(SUM(te.debit * te.exchange_rate), 0) - COALESCE(SUM(te.credit * te.exchange_rate), 0)
+        END as amount
+      FROM accounts a
+      LEFT JOIN transaction_entries te ON te.account_id = a.id
+      LEFT JOIN transactions t ON t.id = te.transaction_id ${whereClause}
+      WHERE a.type IN ('revenue', 'expense') AND a.is_active = 1
+      GROUP BY a.id
+      HAVING amount != 0
+      ORDER BY a.type DESC, a.code
+    `).all(...params) as any[];
+
+    const revenue = rows.filter(r => r.account_type === 'revenue').map(r => ({ account_code: r.account_code, account_name: r.account_name, amount: r.amount }));
+    const expenses = rows.filter(r => r.account_type === 'expense').map(r => ({ account_code: r.account_code, account_name: r.account_name, amount: r.amount }));
+
+    const totalRevenue = revenue.reduce((s, r) => s + r.amount, 0);
+    const totalExpenses = expenses.reduce((s, r) => s + r.amount, 0);
+
+    // Gross profit = sales revenue - cost of goods (for now same as total revenue since no COGS account)
+    const grossProfit = totalRevenue;
+    const netIncome = totalRevenue - totalExpenses;
+
+    return { revenue, expenses, totalRevenue, totalExpenses, netIncome, grossProfit };
   }
 
   // --- Dashboard ---

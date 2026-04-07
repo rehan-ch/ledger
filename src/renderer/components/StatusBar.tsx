@@ -9,9 +9,12 @@ export function StatusBar({ view }: Props) {
     dashboard: 'Overview of accounts, transactions, and financial summaries',
     accounts: 'n: New | Enter/e: Edit | d: Delete | j/k: Navigate',
     journal: 'n: New | Enter: Expand | d: Delete | j/k: Navigate | Ctrl+Enter: Save | Ctrl+A: Add line',
-    ledger: 'j/k: Navigate | /: Filter account | Esc: Clear filter',
+    ledger: 'j/k: Navigate | /: Account | f: From date | t: To date | Esc: Clear',
     'trial-balance': 'j/k: Navigate | /: Set date | Esc: Clear',
+    'balance-sheet': '/: Set date | Esc: Clear | Ctrl+E: Export',
+    'income-statement': '/: Set date range | Esc: Clear | Ctrl+E: Export',
     currencies: 'n: New | Enter: Edit rate | j/k: Navigate',
+    settings: 'Change backup path, view license info',
   };
 
   return (

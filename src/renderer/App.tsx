@@ -9,7 +9,11 @@ import { ChartOfAccounts } from './views/ChartOfAccounts';
 import { JournalEntry } from './views/JournalEntry';
 import { GeneralLedger } from './views/GeneralLedger';
 import { TrialBalance } from './views/TrialBalance';
+import { BalanceSheet } from './views/BalanceSheet';
+import { IncomeStatement } from './views/IncomeStatement';
 import { CurrencyManager } from './views/CurrencyManager';
+import { Settings } from './views/Settings';
+import { HelpOverlay } from './components/HelpOverlay';
 
 declare global {
   interface Window {
@@ -42,13 +46,15 @@ declare global {
       getTrialBalance: (filters?: any) => Promise<any[]>;
       getGeneralLedger: (filters?: any) => Promise<any>;
       getDashboardStats: () => Promise<any>;
+      getBalanceSheet: (date?: string) => Promise<any>;
+      getIncomeStatement: (filters?: any) => Promise<any>;
       seedDemoData: () => Promise<any>;
     };
   }
 }
 
 type AppState = 'loading' | 'setup' | 'activation' | 'app';
-type View = 'dashboard' | 'accounts' | 'journal' | 'ledger' | 'trial-balance' | 'currencies';
+type View = 'dashboard' | 'accounts' | 'journal' | 'ledger' | 'trial-balance' | 'balance-sheet' | 'income-statement' | 'currencies' | 'settings';
 
 const VIEWS: { id: View; label: string; shortcut: string }[] = [
   { id: 'dashboard', label: 'Dashboard', shortcut: '1' },
@@ -56,7 +62,10 @@ const VIEWS: { id: View; label: string; shortcut: string }[] = [
   { id: 'journal', label: 'Journal Entry', shortcut: '3' },
   { id: 'ledger', label: 'General Ledger', shortcut: '4' },
   { id: 'trial-balance', label: 'Trial Balance', shortcut: '5' },
-  { id: 'currencies', label: 'Currencies', shortcut: '6' },
+  { id: 'balance-sheet', label: 'Balance Sheet', shortcut: '6' },
+  { id: 'income-statement', label: 'Income Statement', shortcut: '7' },
+  { id: 'currencies', label: 'Currencies', shortcut: '8' },
+  { id: 'settings', label: 'Settings', shortcut: '9' },
 ];
 
 export function App() {
@@ -66,6 +75,7 @@ export function App() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [licenseInfo, setLicenseInfo] = useState<any>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -115,7 +125,14 @@ export function App() {
         return;
       }
 
-      if (e.altKey && e.key >= '1' && e.key <= '6') {
+      // ? to show help
+      if (e.key === '?' && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setShowHelp(true);
+        return;
+      }
+
+      if (e.altKey && e.key >= '1' && e.key <= '9') {
         e.preventDefault();
         const view = VIEWS[parseInt(e.key) - 1];
         if (view) setActiveView(view.id);
@@ -158,7 +175,10 @@ export function App() {
       case 'journal': return <JournalEntry {...baseProps} />;
       case 'ledger': return <GeneralLedger {...baseProps} />;
       case 'trial-balance': return <TrialBalance {...baseProps} />;
+      case 'balance-sheet': return <BalanceSheet {...baseProps} />;
+      case 'income-statement': return <IncomeStatement {...baseProps} />;
       case 'currencies': return <CurrencyManager {...baseProps} />;
+      case 'settings': return <Settings {...baseProps} />;
     }
   };
 
@@ -178,7 +198,7 @@ export function App() {
       )}
       <header className="app-header">
         <h1>Ledger</h1>
-        <span className="shortcut-hint">Ctrl+P Command Palette | Alt+1-6 Navigate</span>
+        <span className="shortcut-hint">Ctrl+P Command Palette | Alt+1-9 Navigate | ? Help</span>
       </header>
 
       <div className="app-body">
@@ -211,6 +231,7 @@ export function App() {
       )}
 
       {toast && <Toast message={toast} />}
+      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

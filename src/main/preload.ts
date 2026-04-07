@@ -41,5 +41,7 @@ contextBridge.exposeInMainWorld('api', {
   getTrialBalance: (filters?: any) => ipcRenderer.invoke('reports:trialBalance', filters),
   getGeneralLedger: (filters?: any) => ipcRenderer.invoke('reports:generalLedger', filters),
   getDashboardStats: () => ipcRenderer.invoke('reports:dashboard'),
+  getIncomeStatement: (filters?: any) => ipcRenderer.invoke('reports:incomeStatement', filters),
+  getBalanceSheet: (date?: string) => ipcRenderer.invoke('reports:balanceSheet', date),
   seedDemoData: () => ipcRenderer.invoke('dev:seed'),
 });
